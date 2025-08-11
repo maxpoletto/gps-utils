@@ -1,7 +1,7 @@
 #!/opt/local/bin/python3
 
-# This script generates trackpoints for a TCX activity based on
-# trackpoints in a TCX course.
+# This script generates trackpoints for a TCX or GPX activity based on
+# trackpoints in a TCX or GPX course.
 #
 # Given a start time, an end time, and a course with n trackpoints, it
 # generates an activity with n trackpoints where the time of each
@@ -42,13 +42,21 @@ from io import BytesIO
 from lxml import etree
 from lxml import objectify
 
-parser = argparse.ArgumentParser(description="Generate a TCX track from a TCX course.")
-parser.add_argument("-i", "--input", help="input TCX course file")
-parser.add_argument("-o", "--output", help="output TCX track file")
-parser.add_argument("-s", "--start_time", help="ISO-8601 start time for track")
-parser.add_argument("-e", "--end_time", help="ISO-8601 end time for track")
+parser = argparse.ArgumentParser(description="Generate a TCX or GPX track from a TCX or GPX course.")
+parser.add_argument("-i", "--input", help="input TCX or GPX course file", required=True)
+parser.add_argument("-o", "--output", help="output TCX or GPX track file", required=True)
+parser.add_argument("-s", "--start_time", help="ISO-8601 start time for track", required=True)
+parser.add_argument("-e", "--end_time", help="ISO-8601 end time for track", required=True)
 parser.add_argument("-d", "--start_dist", help="distance (in meters) of first trackpoint", type=float)
+parser.add_argument("-t", "--type", help="type of trackpoint to generate", choices=["tcx", "gpx"], )
 args = parser.parse_args()
+
+# Parse type arg.
+if args.type is None:
+    args.type = args.input.split(".")[-1].lower()
+if args.type not in ["tcx", "gpx"]:
+    print("Invalid type: %s" % args.type)
+    exit(1)
 
 # Parse time and dist args.
 start_dist = 0
@@ -79,25 +87,34 @@ for e in root.getiterator():
 objectify.deannotate(root, cleanup_namespaces=True)
 
 # Process trackpoints, adjusting distance and time.
-trackpoints = root.xpath("//Trackpoint")
+if args.type == "tcx":
+    trackpoints = root.xpath("//Trackpoint")
+elif args.type == "gpx":
+    trackpoints = root.xpath("//trkpt")
 track = trackpoints[0].getparent()
+
+# Generate trackpoints.
 dist_delta = None
 time_delta = 0
 if len(trackpoints) > 1:
     time_delta = (end_time - start_time) / (len(trackpoints)-1)
 
+time_key = "Time" if args.type == "tcx" else "time"
+
 for i, p in enumerate(trackpoints):
-    ed = p.find("DistanceMeters")
-    if dist_delta is None:
-        dist_delta = start_dist - float(ed.text)
-    ed.text = str(float(ed.text) + dist_delta)
-    et = p.find("Time")
-    et.text = str(start_time + i*time_delta)
-    
+    if args.type == "tcx":
+        ed = p.find("DistanceMeters")
+        if dist_delta is None:
+            dist_delta = start_dist - float(ed.text)
+        ed.text = str(float(ed.text) + dist_delta)
+    et = p.find(time_key)
+    # Format time as YYYY-MM-DDTHH:MM:SSZ
+    t = start_time + i*time_delta
+    et.text = t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
 # Pretty-print the output.
 try:
     etree.ElementTree(track).write(args.output, pretty_print=True)
 except Exception as e:
     print(e)
     exit(1)
-
